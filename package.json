@@ -1,0 +1,36 @@
+{
+  "name": "gdclone",
+  "version": "1.0.0",
+  "description": "CLI tool for recursive Google Drive folder cloning",
+  "main": "dist/cli.js",
+  "bin": {
+    "gdclone": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsup src/cli.ts --format cjs --dts",
+    "dev": "tsx src/cli.ts",
+    "test": "vitest",
+    "lint": "eslint src"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/cli-progress": "^3.11.6",
+    "@types/node": "^22.0.0",
+    "@types/prompts": "^2.4.9",
+    "eslint": "^10.0.0",
+    "prettier": "^3.0.0",
+    "tsup": "^8.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.0.0",
+    "typescript-eslint": "^8.56.0",
+    "vitest": "^2.0.0"
+  },
+  "dependencies": {
+    "cli-progress": "^3.12.0",
+    "commander": "^14.0.3",
+    "dotenv": "^17.3.1",
+    "google-auth-library": "^10.5.0",
+    "googleapis": "^171.4.0",
+    "prompts": "^2.4.2"
+  }
+}

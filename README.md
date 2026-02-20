@@ -1,56 +1,64 @@
-# Google Drive Folder Cloner
+# Google Drive Folder Cloner CLI
 
-A Node.js CLI tool to recursively clone Google Drive folders. This tool allows you to duplicate entire directory structures and files within Google Drive, which is particularly useful for taking true ownership of files shared from another account.
+A Node.js CLI tool for recursively cloning Google Drive folder hierarchies server-side. This solves the problem of file ownership transfer between Google accounts by providing a risk-free, two-step workflow for consolidating ownership without modifying or moving original files.
 
-## Overview
+## Features
 
-When you copy a file in Google Drive, the account that performs the copy becomes the owner of the new file, and the file consumes their storage quota. This CLI tool automates the tedious process of recursively copying deep folder structures, providing a live progress bar, file preview, and utilizing a clean Device Authorization flow for authentication.
+- **Server-side duplication**: Uses Drive API `files.copy` so files aren't downloaded and uploaded, and explicitly overrides the "Copy of " prefix.
+- **Interactive Prompts**: If your source folder name is ambiguous, the CLI will ask you to select the correct path.
+- **Preview**: See a truncated list of files before confirming the clone.
+- **Ephemeral Authentication**: Uses the Google Device Authorization Flow to keep credentials safe and ephemeral.
+- **Auto-sharing**: Optionally share the cloned destination folder with another Google account right away.
 
-## General Usage
+## Setup
 
-You can install the tool globally or run it via a package manager.
+1. Go to the [Google Cloud Console](https://console.cloud.google.com/).
+2. Create a new project.
+3. Navigate to **APIs & Services > Library** and enable the **Google Drive API**.
+4. Navigate to **APIs & Services > OAuth consent screen** and configure it for **Desktop app** (External or Internal).
+5. Navigate to **APIs & Services > Credentials**.
+6. Click **Create Credentials > OAuth client ID**.
+7. Select **Desktop app** as the application type.
+8. Download the JSON file and save it as `credentials.json` in the directory from which you run the CLI.
 
-### Installation
+## Installation
+
+You can install this CLI globally using `npm` or `pnpm`:
 
 ```bash
-# Clone the repository and install globally
+# Build the project first
+pnpm install
+pnpm build
+
+# Install globally
 pnpm install -g .
 ```
 
-### Command
+## Usage
+
+Run the CLI using the `gdclone` command (or `pnpm dev` for local execution):
 
 ```bash
-gdrive-clone --source <source-folder-id-or-name> --dest <destination-folder-id-or-name>
+# Basic usage (prompts for confirmation)
+gdclone "My Source Folder" "My Cloned Folder"
+
+# Using a specific Google Drive Folder ID
+gdclone "1aBcD2eFgH3iJkL4mNoP5qRsT6uVwXyZ7" "My Cloned Folder"
+
+# Auto-share the cloned folder with another account (Editor access)
+gdclone "My Source Folder" "My Cloned Folder" --share-with "user@example.com"
+
+# Skip confirmation prompts (YOLO mode)
+gdclone "My Source Folder" "My Cloned Folder" -y
 ```
 
-**Options:**
-- `--source <id|name>`: (Required) The ID or name of the folder you want to copy.
-- `--dest <id|name>`: (Required) The ID or name of the destination folder where the copy will be placed.
-- `--share-with <email>`: (Optional) Email address to automatically share the newly cloned folder with.
-- `-y`, `--yolo`: (Optional) Bypass the interactive preview and confirmation prompt, starting the cloning process immediately.
+### Authentication
 
-**Example:**
-```bash
-gdrive-clone --source "Shared Projects" --dest "My Drive/Backups" --share-with colleague@example.com
+When you run the tool for the first time in a session, it will output a verification URL and a code:
+
+```
+Please visit this URL: https://www.google.com/device
+And enter the following code: ABCD-EFGH
 ```
 
-### Flow
-1. **Authentication:** The tool will prompt you to visit `google.com/device` and enter a code to authenticate securely.
-2. **Ambiguity Resolution:** If a folder name matches multiple locations (e.g. "Projects"), you'll be prompted to select the exact path.
-3. **Pre-scan & Preview:** It performs a lightweight scan of the source directory, counts the total files/folders, and displays a truncated preview.
-4. **Confirmation:** Unless the `-y` flag is passed, you will be asked to confirm the operation.
-5. **Cloning:** A live progress bar will track the recursive duplication of all files and folders.
-
-## Two-Step File Transfer (Ownership Consolidation)
-
-This tool is designed to solve the common problem of transferring ownership between accounts where direct transfer is restricted (e.g., between different Google Workspace domains).
-
-To fully transfer ownership of a folder from **Account A** to **Account B**:
-
-**Step 1: Share the Source Folder**
-From Account A, share the target Google Drive folder with Account B, granting them at least "Viewer" access.
-
-**Step 2: Clone as the Destination Account**
-Run the CLI tool and authenticate using **Account B**. Provide the ID/name of the shared folder as the `--source`, and a folder ID/name owned by Account B as the `--dest`.
-
-Because Account B performs the copy operations, Account B becomes the true, permanent owner of the duplicated files. The copies will consume Account B's storage quota, and the original files in Account A remain untouched.
+Open the URL in any browser, log into the Google account that _owns_ the destination quota, and enter the code. The CLI will automatically resume once access is granted.
