@@ -2,10 +2,14 @@ import { drive_v3 } from 'googleapis';
 import cliProgress from 'cli-progress';
 import { createFolder, copyFile, listFolderContents, shareFolder } from './drive';
 
-export async function preScan(
-  drive: drive_v3.Drive,
-  sourceId: string
-): Promise<number> {
+export class InsufficientQuotaError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'InsufficientQuotaError';
+  }
+}
+
+export async function preScan(drive: drive_v3.Drive, sourceId: string): Promise<number> {
   let count = 0;
   const items = await listFolderContents(drive, sourceId);
   for (const item of items) {
@@ -21,7 +25,7 @@ export async function cloneFolder(
   drive: drive_v3.Drive,
   sourceId: string,
   destName: string,
-  shareWithEmail?: string
+  shareWithEmail?: string,
 ) {
   console.log('Pre-scanning folder structure to calculate total items...');
   const totalItems = await preScan(drive, sourceId);
@@ -32,7 +36,7 @@ export async function cloneFolder(
     {
       format: 'Cloning |{bar}| {percentage}% || {value}/{total} items || Current: {item}',
     },
-    cliProgress.Presets.shades_classic
+    cliProgress.Presets.shades_classic,
   );
   progressBar.start(totalItems + 1, 0, { item: 'Root Folder' });
 
@@ -44,9 +48,13 @@ export async function cloneFolder(
   if (shareWithEmail) {
     try {
       await shareFolder(drive, rootDestId, shareWithEmail);
-    } catch (err: any) {
+    } catch (err: unknown) {
       progressBar.stop();
-      console.warn(`\nWarning: Failed to share folder with ${shareWithEmail}. ${err.message}`);
+      if (err instanceof Error) {
+        console.warn(`\nWarning: Failed to share folder with ${shareWithEmail}. ${err.message}`);
+      } else {
+        console.warn(`\nWarning: Failed to share folder with ${shareWithEmail}.`);
+      }
       progressBar.start(totalItems + 1, 1, { item: 'Continuing clone...' });
     }
   }
@@ -62,7 +70,7 @@ async function recursiveClone(
   drive: drive_v3.Drive,
   sourceId: string,
   destId: string,
-  progressBar: cliProgress.SingleBar
+  progressBar: cliProgress.SingleBar,
 ) {
   const items = await listFolderContents(drive, sourceId);
 
@@ -79,13 +87,13 @@ async function recursiveClone(
         await copyFile(drive, item.id!, item.name!, destId);
         progressBar.increment(1);
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       progressBar.stop();
-      if (err.message.includes('403 Insufficient Quota')) {
-        console.error(`\nError: Insufficient Drive storage quota to copy "${item.name}".`);
-        process.exit(1);
+      const message = err instanceof Error ? err.message : String(err);
+      if (message.includes('403 Insufficient Quota')) {
+        throw new InsufficientQuotaError(`Insufficient Drive storage quota to copy "${item.name}".`);
       }
-      console.warn(`\nWarning: Failed to copy "${item.name}". Skipping. (${err.message})`);
+      console.warn(`\nWarning: Failed to copy "${item.name}". Skipping. (${message})`);
       progressBar.start(progressBar.getTotal(), progressBar.getProgress() * progressBar.getTotal(), { item: 'Resuming...' });
     }
   }

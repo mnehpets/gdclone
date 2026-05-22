@@ -31,7 +31,7 @@ program
 
       if (folders.length > 1) {
         const choices = await Promise.all(
-          folders.map(async (f: any) => {
+          folders.map(async (f) => {
             const fullPath = await resolveFullPath(drive, f);
             return { title: fullPath, value: f };
           }),
@@ -60,7 +60,7 @@ program
       const sampleFiles = await getSampleFiles(drive, folderId, 5);
       if (sampleFiles.length > 0) {
         console.log(`\nSample contents of source folder:`);
-        sampleFiles.forEach((f: any) => console.log(` - ${f.name}`));
+        sampleFiles.forEach((f) => console.log(` - ${f.name}`));
         console.log(`   ...`);
       } else {
         console.log(`\nSource folder is empty or unreadable.`);
@@ -82,8 +82,13 @@ program
 
       console.log('Cloning process will start soon...');
       await cloneFolder(drive, folderId, dest, options.shareWith);
-    } catch (err: any) {
-      console.error(`Error: ${err.message}`);
+      process.exit(0);
+    } catch (err: unknown) {
+      if (err instanceof Error) {
+        console.error(`Error: ${err.message}`);
+      } else {
+        console.error(`An unexpected error occurred: ${String(err)}`);
+      }
       process.exit(1);
     }
   });

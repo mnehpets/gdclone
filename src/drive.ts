@@ -7,39 +7,47 @@ export async function getDriveClient(): Promise<drive_v3.Drive> {
 }
 
 export async function findFolders(drive: drive_v3.Drive, nameOrId: string) {
-  const isId = /^[a-zA-Z0-9_-]{20,}$/.test(nameOrId);
-  
   let query = `mimeType='application/vnd.google-apps.folder' and trashed=false`;
-  if (isId) {
-    try {
-      const res: any = await drive.files.get({
-        fileId: nameOrId,
-        fields: 'id, name, parents'
-      });
-      return res.data ? [res.data] : [];
-    } catch (_e: any) { /* ignore */ }
+
+  try {
+    const res = await drive.files.get({
+      fileId: nameOrId,
+      fields: 'id, name, parents, mimeType',
+      supportsAllDrives: true,
+    });
+    if (res.data && res.data.mimeType === 'application/vnd.google-apps.folder') {
+      return [res.data];
+    }
+  } catch (_e: unknown) {
+    /* ignore and fallback to name query */
   }
 
   query += ` and name='${nameOrId.replace(/'/g, "\\'")}'`;
-  const res: any = await drive.files.list({
+  const res = await drive.files.list({
     q: query,
-    fields: 'files(id, name, parents)',
+    fields: 'files(id, name, parents, mimeType)',
     spaces: 'drive',
+    supportsAllDrives: true,
+    includeItemsFromAllDrives: true,
   });
 
   return res.data.files || [];
 }
 
-export async function resolveFullPath(drive: drive_v3.Drive, file: drive_v3.Schema$File): Promise<string> {
+export async function resolveFullPath(
+  drive: drive_v3.Drive,
+  file: drive_v3.Schema$File,
+): Promise<string> {
   let path = file.name || 'Unknown';
   let currentFile = file;
 
   while (currentFile.parents && currentFile.parents.length > 0) {
     const parentId = currentFile.parents[0];
     try {
-      const parentRes: any = await drive.files.get({
+      const parentRes = await drive.files.get({
         fileId: parentId,
         fields: 'id, name, parents',
+        supportsAllDrives: true,
       });
       if (parentRes.data && parentRes.data.name) {
         path = `${parentRes.data.name}/${path}`;
@@ -48,7 +56,7 @@ export async function resolveFullPath(drive: drive_v3.Drive, file: drive_v3.Sche
         break;
       }
     } catch (_e) {
-      break; 
+      break;
     }
   }
 
@@ -56,16 +64,22 @@ export async function resolveFullPath(drive: drive_v3.Drive, file: drive_v3.Sche
 }
 
 export async function getSampleFiles(drive: drive_v3.Drive, folderId: string, limit = 5) {
-  const res: any = await drive.files.list({
+  const res = await drive.files.list({
     q: `'${folderId}' in parents and trashed=false`,
     fields: 'files(name, mimeType)',
     pageSize: limit,
+    supportsAllDrives: true,
+    includeItemsFromAllDrives: true,
   });
   return res.data.files || [];
 }
 
-export async function createFolder(drive: drive_v3.Drive, name: string, parentId?: string): Promise<string> {
-  const fileMetadata: any = {
+export async function createFolder(
+  drive: drive_v3.Drive,
+  name: string,
+  parentId?: string,
+): Promise<string> {
+  const fileMetadata: drive_v3.Schema$File = {
     name,
     mimeType: 'application/vnd.google-apps.folder',
   };
@@ -73,15 +87,21 @@ export async function createFolder(drive: drive_v3.Drive, name: string, parentId
     fileMetadata.parents = [parentId];
   }
 
-  const res: any = await drive.files.create({
+  const res = await drive.files.create({
     requestBody: fileMetadata,
     fields: 'id',
+    supportsAllDrives: true,
   });
 
   return res.data.id!;
 }
 
-export async function copyFile(drive: drive_v3.Drive, fileId: string, name: string, parentId: string) {
+export async function copyFile(
+  drive: drive_v3.Drive,
+  fileId: string,
+  name: string,
+  parentId: string,
+) {
   try {
     await drive.files.copy({
       fileId,
@@ -89,9 +109,15 @@ export async function copyFile(drive: drive_v3.Drive, fileId: string, name: stri
         name,
         parents: [parentId],
       },
+      supportsAllDrives: true,
     });
-  } catch (err: any) {
-    if (err.code === 403 && err.message.includes('Quota')) {
+  } catch (err: unknown) {
+    if (
+      err instanceof Error &&
+      'code' in err &&
+      err.code === 403 &&
+      err.message.includes('Quota')
+    ) {
       throw new Error(`403 Insufficient Quota: ${err.message}`, { cause: err });
     }
     throw err;
@@ -103,15 +129,18 @@ export async function listFolderContents(drive: drive_v3.Drive, folderId: string
   let pageToken: string | undefined = undefined;
 
   do {
-    const res: any = await drive.files.list({
+    const params: drive_v3.Params$Resource$Files$List = {
       q: `'${folderId}' in parents and trashed=false`,
       fields: 'nextPageToken, files(id, name, mimeType)',
-      pageToken: pageToken || undefined,
-    });
-    if (res.data.files) {
-      items = items.concat(res.data.files);
+      pageToken: pageToken,
+      supportsAllDrives: true,
+      includeItemsFromAllDrives: true,
+    };
+    const response = await drive.files.list(params);
+    if (response.data.files) {
+      items = items.concat(response.data.files);
     }
-    pageToken = res.data.nextPageToken || undefined;
+    pageToken = response.data.nextPageToken || undefined;
   } while (pageToken);
 
   return items;
@@ -126,5 +155,6 @@ export async function shareFolder(drive: drive_v3.Drive, folderId: string, email
       emailAddress: email,
     },
     sendNotificationEmail: false,
+    supportsAllDrives: true,
   });
 }
