@@ -3,87 +3,114 @@ import path from 'path';
 import { google } from 'googleapis';
 import type { OAuth2Client } from 'google-auth-library';
 import dotenv from 'dotenv';
+import http from 'node:http';
+import { URL } from 'node:url';
 
 dotenv.config();
 
 const SCOPES = ['https://www.googleapis.com/auth/drive'];
 
 export async function authorize(): Promise<OAuth2Client> {
+  let client_id = process.env.GOOGLE_CLIENT_ID;
+  let client_secret = process.env.GOOGLE_CLIENT_SECRET;
+
   const credPath = path.resolve(process.cwd(), 'credentials.json');
-  if (!fs.existsSync(credPath)) {
-    throw new Error('credentials.json not found in the current directory. Please follow the setup instructions in the README.');
+  if (fs.existsSync(credPath)) {
+    const content = fs.readFileSync(credPath, 'utf8');
+    const credentials = JSON.parse(content);
+    const creds = credentials.installed || credentials.web;
+    client_id = client_id || creds.client_id;
+    client_secret = client_secret || creds.client_secret;
   }
 
-  const content = fs.readFileSync(credPath, 'utf8');
-  const credentials = JSON.parse(content);
-  const { client_secret, client_id, redirect_uris } = credentials.installed || credentials.web;
+  if (!client_id || !client_secret) {
+    throw new Error(
+      'OAuth credentials not found. Please provide credentials.json or set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET environment variables.',
+    );
+  }
 
-  const oAuth2Client = new google.auth.OAuth2(
-    client_id,
-    client_secret,
-    redirect_uris ? redirect_uris[0] : 'urn:ietf:wg:oauth:2.0:oob'
-  );
-
-  return new Promise((resolve, reject) => {
-    oAuth2Client.on('tokens', (tokens) => {
-      oAuth2Client.setCredentials(tokens);
-    });
-
-    // Implement Device Flow manually as google-auth-library might not expose it easily
-    executeDeviceFlow(client_id, client_secret).then(tokens => {
-        oAuth2Client.setCredentials(tokens);
-        resolve(oAuth2Client);
-    }).catch(reject);
-  });
+  return executeLoopbackFlow(client_id, client_secret);
 }
 
-async function executeDeviceFlow(clientId: string, clientSecret: string) {
-  const res = await fetch('https://oauth2.googleapis.com/device/code', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      client_id: clientId,
-      scope: SCOPES.join(' '),
-    }),
-  });
+async function executeLoopbackFlow(clientId: string, clientSecret: string): Promise<OAuth2Client> {
+  return new Promise((resolve, reject) => {
+    const server = http.createServer(async (req, res) => {
+      try {
+        if (!req.url) return;
+        
+        const address = server.address();
+        if (!address || typeof address === 'string') return;
+        
+        const port = address.port;
+        const url = new URL(req.url, `http://127.0.0.1:${port}`);
+        
+        if (url.pathname !== '/') {
+          res.writeHead(404);
+          res.end();
+          return;
+        }
 
-  const data: any = await res.json();
-  if (data.error) {
-    throw new Error(`Device flow error: ${data.error_description || data.error}`);
-  }
+        const code = url.searchParams.get('code');
+        const error = url.searchParams.get('error');
 
-  console.log(`\nPlease visit this URL: ${data.verification_url}`);
-  console.log(`And enter the following code: ${data.user_code}\n`);
+        if (error) {
+          res.writeHead(400, { 'Content-Type': 'text/plain' });
+          res.end(`Authorization failed: ${error}`);
+          server.close();
+          return reject(new Error(`Authorization failed: ${error}`));
+        }
 
-  let intervalMs = data.interval * 1000;
-  const deviceCode = data.device_code;
+        if (code) {
+          res.writeHead(200, { 'Content-Type': 'text/plain' });
+          res.end('Authentication successful! You can close this window and return to the terminal.');
+          server.close();
 
-  while (true) {
-    await new Promise(r => setTimeout(r, intervalMs));
-    
-    const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        client_id: clientId,
-        client_secret: clientSecret,
-        device_code: deviceCode,
-        grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
-      }),
+          const oAuth2Client = new google.auth.OAuth2(
+            clientId,
+            clientSecret,
+            `http://127.0.0.1:${port}`
+          );
+
+          const { tokens } = await oAuth2Client.getToken(code);
+          oAuth2Client.setCredentials(tokens);
+          oAuth2Client.on('tokens', (newTokens) => {
+            oAuth2Client.setCredentials(newTokens);
+          });
+          
+          resolve(oAuth2Client);
+        }
+      } catch (e) {
+        reject(e);
+      }
     });
 
-    const tokenData: any = await tokenRes.json();
-    if (tokenData.error) {
-      if (tokenData.error === 'authorization_pending') {
-        continue;
-      } else if (tokenData.error === 'slow_down') {
-        intervalMs += 2000;
-        continue;
-      } else {
-        throw new Error(`Token polling error: ${tokenData.error_description || tokenData.error}`);
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address();
+      if (!address || typeof address === 'string') {
+        return reject(new Error('Failed to start loopback server.'));
       }
-    }
+      
+      const port = address.port;
+      const redirectUri = `http://127.0.0.1:${port}`;
 
-    return tokenData;
-  }
+      const oAuth2Client = new google.auth.OAuth2(
+        clientId,
+        clientSecret,
+        redirectUri
+      );
+
+      const authUrl = oAuth2Client.generateAuthUrl({
+        access_type: 'offline',
+        scope: SCOPES,
+      });
+
+      console.log(`\nPlease open the following URL in your browser to authorize the application:\n`);
+      console.log(authUrl);
+      console.log(`\nWaiting for authorization on ${redirectUri}...`);
+    });
+
+    server.on('error', (e) => {
+      reject(e);
+    });
+  });
 }
